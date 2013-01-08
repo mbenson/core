@@ -13,13 +13,10 @@ import java.util.ListIterator;
 
 import org.eclipse.jdt.core.dom.AST;
 import org.eclipse.jdt.core.dom.ASTNode;
-import org.eclipse.jdt.core.dom.BodyDeclaration;
 import org.eclipse.jdt.core.dom.Expression;
-import org.eclipse.jdt.core.dom.IExtendedModifier;
 import org.eclipse.jdt.core.dom.MemberValuePair;
 import org.eclipse.jdt.core.dom.NormalAnnotation;
 import org.eclipse.jdt.core.dom.SingleMemberAnnotation;
-import org.eclipse.jdt.core.dom.SingleVariableDeclaration;
 import org.jboss.forge.parser.JavaParser;
 import org.jboss.forge.parser.java.Annotation;
 import org.jboss.forge.parser.java.AnnotationTarget;
@@ -31,7 +28,7 @@ import org.jboss.forge.parser.java.util.Strings;
 /**
  * @author <a href="mailto:lincolnbaxter@gmail.com">Lincoln Baxter, III</a>
  */
-public class AnnotationImpl<O extends JavaSource<O>, T> implements Annotation<O>
+public abstract class AnnotationImpl<O extends JavaSource<O>, T> implements Annotation<O>
 {
    private class Nested extends AnnotationImpl<O, T>
    {
@@ -457,38 +454,17 @@ public class AnnotationImpl<O extends JavaSource<O>, T> implements Annotation<O>
       return annotation.toString();
    }
 
-   @SuppressWarnings("unchecked")
-   protected void replace(org.eclipse.jdt.core.dom.Annotation oldNode, org.eclipse.jdt.core.dom.Annotation newNode)
-   {
-      List<IExtendedModifier> modifiers;
-      ASTNode parentNode = oldNode.getParent();
-      if (parentNode instanceof BodyDeclaration)
-      {
-         modifiers = ((BodyDeclaration) parentNode).modifiers();
-      }
-      else if (parentNode instanceof SingleVariableDeclaration)
-      {
-         modifiers = ((SingleVariableDeclaration) parentNode).modifiers();
-      }
-      else
-      {
-         throw new IllegalStateException("Cannot handle annotations attached to " + parentNode);
-      }
-      
-      int pos = modifiers.indexOf(annotation);
-      if (pos >= 0)
-      {
-         modifiers.set(pos, newNode);
-      }
-   }
+   protected abstract void replace(org.eclipse.jdt.core.dom.Annotation oldNode, org.eclipse.jdt.core.dom.Annotation newNode);
 
    private void convertTo(final AnnotationType type)
    {
-      String value = this.getLiteralValue();
-      AnnotationImpl<O, T> na = new AnnotationImpl<O, T>(parent, type);
-      na.setName(getName());
-      replace(annotation, na.annotation);
-      annotation = na.annotation;
+      final String name = getName();
+      final String value = this.getLiteralValue();
+
+      org.eclipse.jdt.core.dom.Annotation newNode = createAnnotation(parent, type);
+      replace(annotation, newNode);
+      annotation = newNode;
+      setName(name);
 
       if (AnnotationType.MARKER != type && (value != null))
       {

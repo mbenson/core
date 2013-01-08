@@ -9,9 +9,11 @@ package org.jboss.forge.parser.java.ast;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 import java.util.ListIterator;
 
+import org.eclipse.jdt.core.dom.ASTNode;
 import org.eclipse.jdt.core.dom.BodyDeclaration;
 import org.eclipse.jdt.core.dom.IExtendedModifier;
 import org.eclipse.jdt.core.dom.SingleVariableDeclaration;
@@ -26,19 +28,94 @@ import org.jboss.forge.parser.java.util.Types;
  */
 public class AnnotationAccessor<O extends JavaSource<O>, T>
 {
+   private enum Replace
+   {
+
+      BODY()
+      {
+         @SuppressWarnings("unchecked")
+         @Override
+         List<IExtendedModifier> modifiers(ASTNode parent)
+         {
+            return ((BodyDeclaration) parent).modifiers();
+         }
+      },
+      VARIABLE()
+      {
+         @SuppressWarnings("unchecked")
+         @Override
+         List<IExtendedModifier> modifiers(ASTNode parent)
+         {
+            return ((SingleVariableDeclaration) parent).modifiers();
+         }
+      };
+      abstract List<IExtendedModifier> modifiers(ASTNode parent);
+
+      void replace(org.eclipse.jdt.core.dom.Annotation oldNode, org.eclipse.jdt.core.dom.Annotation newNode)
+      {
+         List<IExtendedModifier> modifiers = modifiers(oldNode.getParent());
+
+         int pos = modifiers.indexOf(oldNode);
+         if (pos >= 0)
+         {
+            modifiers.set(pos, newNode);
+         }
+      }
+   }
+
+   private class ConcreteAnnotation extends AnnotationImpl<O, T>
+   {
+      final Replace replace;
+
+      ConcreteAnnotation(AnnotationTarget<O, T> parent, Object internal, Replace replace)
+      {
+         super(parent, internal);
+         this.replace = replace;
+      }
+
+      ConcreteAnnotation(AnnotationTarget<O, T> parent, Replace replace)
+      {
+         super(parent);
+         this.replace = replace;
+      }
+
+      @Override
+      protected void replace(org.eclipse.jdt.core.dom.Annotation oldNode, org.eclipse.jdt.core.dom.Annotation newNode)
+      {
+         replace.replace(oldNode, newNode);
+      }
+   }
+
+   private class AnnotationFactory
+   {
+      final AnnotationTarget<O, T> target;
+      final Replace replace;
+
+      AnnotationFactory(AnnotationTarget<O, T> target, Replace replace)
+      {
+         super();
+         this.target = target;
+         this.replace = replace;
+      }
+
+      Annotation<O> createAnnotationFor(org.eclipse.jdt.core.dom.Annotation node)
+      {
+         return new ConcreteAnnotation(target, node, replace);
+      }
+   }
 
    public Annotation<O> addAnnotation(final AnnotationTarget<O, T> target, final BodyDeclaration body)
    {
-      return addAnnotation(target, body.modifiers());
+      return addTo(body.modifiers(), new ConcreteAnnotation(target, Replace.BODY));
    }
 
    public Annotation<O> addAnnotation(final AnnotationTarget<O, T> target,
             final SingleVariableDeclaration variableDeclaration)
    {
-      return addAnnotation(target, variableDeclaration.modifiers());
+      return addTo(variableDeclaration.modifiers(), new ConcreteAnnotation(target, Replace.VARIABLE));
    }
 
-   private Annotation<O> addAnnotation(final AnnotationTarget<O, T> target, final List<?> modifiers)
+   private Annotation<O> addTo(List<?> modifiers, final Annotation<O> result)
    {
       @SuppressWarnings("unchecked")
       ListIterator<IExtendedModifier> iter = (ListIterator<IExtendedModifier>) modifiers.listIterator();
@@ -50,59 +127,59 @@ public class AnnotationAccessor<O extends JavaSource<O>, T>
       {
          iter.next();
       }
-      Annotation<O> annotation = new AnnotationImpl<O, T>(target);
-      iter.add((IExtendedModifier) annotation.getInternal());
-      return annotation;
+      iter.add((org.eclipse.jdt.core.dom.Annotation) result.getInternal());
+      return result;
    }
 
    public Annotation<O> addAnnotation(final AnnotationTarget<O, T> target, final BodyDeclaration body,
             final Class<?> clazz)
    {
-      return addAnnotation(target, body.modifiers(), clazz.getName());
+      return addAnnotation(target, body, clazz.getName());
    }
 
    public Annotation<O> addAnnotation(final AnnotationTarget<O, T> target,
             final SingleVariableDeclaration variableDeclaration,
             final Class<?> clazz)
    {
-      return addAnnotation(target, variableDeclaration.modifiers(), clazz.getName());
+      return addAnnotation(target, variableDeclaration, clazz.getName());
    }
 
    public Annotation<O> addAnnotation(final AnnotationTarget<O, T> target, final BodyDeclaration body,
             final String className)
    {
-      return addAnnotation(target, body.modifiers(), className);
-   }
-
-   public Annotation<O> addAnnotation(final AnnotationTarget<O, T> target,
-            final SingleVariableDeclaration variableDeclaration,
-            final String className)
-   {
-      return addAnnotation(target, variableDeclaration.modifiers(), className);
-   }
-
-   private Annotation<O> addAnnotation(final AnnotationTarget<O, T> target, final List<?> modifiers,
-            final String className)
-   {
-      if (!target.getOrigin().hasImport(className) && Types.isQualified(className))
+      if (Types.isQualified(className))
       {
          target.getOrigin().addImport(className);
       }
-      return addAnnotation(target, modifiers).setName(Types.toSimpleName(className));
+      return addTo(body.modifiers(),
+               new ConcreteAnnotation(target, Replace.BODY).setName(Types.toSimpleName(className)));
+   }
+
+   public Annotation<O> addAnnotation(final AnnotationTarget<O, T> target,
+            final SingleVariableDeclaration variableDeclaration,
+            final String className)
+   {
+      if (Types.isQualified(className))
+      {
+         target.getOrigin().addImport(className);
+      }
+      return addTo(variableDeclaration.modifiers(),
+               new ConcreteAnnotation(target, Replace.VARIABLE).setName(Types.toSimpleName(className)));
    }
 
    public List<Annotation<O>> getAnnotations(final AnnotationTarget<O, T> target, final BodyDeclaration body)
    {
-      return getAnnotations(target, body.modifiers());
+      return getAnnotations(target, body.modifiers(), new AnnotationFactory(target, Replace.BODY));
    }
 
    public List<Annotation<O>> getAnnotations(final AnnotationTarget<O, T> target,
             final SingleVariableDeclaration variableDeclaration)
    {
-      return getAnnotations(target, variableDeclaration.modifiers());
+      return getAnnotations(target, variableDeclaration.modifiers(), new AnnotationFactory(target, Replace.VARIABLE));
    }
 
-   private List<Annotation<O>> getAnnotations(final AnnotationTarget<O, T> target, final List<?> modifiers)
+   private List<Annotation<O>> getAnnotations(final AnnotationTarget<O, T> target, final List<?> modifiers,
+            AnnotationFactory annotationFactory)
    {
       List<Annotation<O>> result = new ArrayList<Annotation<O>>();
 
@@ -110,8 +187,7 @@ public class AnnotationAccessor<O extends JavaSource<O>, T>
       {
          if (object instanceof org.eclipse.jdt.core.dom.Annotation)
          {
-            Annotation<O> annotation = new AnnotationImpl<O, T>(target, object);
-            result.add(annotation);
+            result.add(annotationFactory.createAnnotationFor((org.eclipse.jdt.core.dom.Annotation) object));
          }
       }
 
@@ -148,68 +224,58 @@ public class AnnotationAccessor<O extends JavaSource<O>, T>
    public <E extends AnnotationTarget<O, T>> boolean hasAnnotation(final E target, final BodyDeclaration body,
             final String type)
    {
-      return hasAnnotation(target, body.modifiers(), type);
+      return getAnnotation(target, body, type) != null;
    }
 
    public <E extends AnnotationTarget<O, T>> boolean hasAnnotation(final E target,
             final SingleVariableDeclaration variableDeclaration,
             final String type)
    {
-      return hasAnnotation(target, variableDeclaration.modifiers(), type);
-   }
-
-   private <E extends AnnotationTarget<O, T>> boolean hasAnnotation(final E target, final List<?> modifiers,
-            final String type)
-   {
-      for (Object object : modifiers)
-      {
-         if (object instanceof org.eclipse.jdt.core.dom.Annotation)
-         {
-            Annotation<O> annotation = new AnnotationImpl<O, T>(target, object);
-            String annotationType = annotation.getName();
-            if (Types.areEquivalent(type, annotationType))
-            {
-               return true;
-            }
-         }
-      }
-      return false;
+      return getAnnotation(target, variableDeclaration, type) != null;
    }
 
    public Annotation<O> getAnnotation(final AnnotationTarget<O, T> target, final BodyDeclaration body,
             final Class<? extends java.lang.annotation.Annotation> type)
    {
-      return getAnnotation(target, body.modifiers(), type.getName());
+      return getAnnotation(target, body, type.getName());
    }
 
    public Annotation<O> getAnnotation(final AnnotationTarget<O, T> target,
             final SingleVariableDeclaration variableDeclaration,
             final Class<? extends java.lang.annotation.Annotation> type)
    {
-      return getAnnotation(target, variableDeclaration.modifiers(), type.getName());
+      return getAnnotation(target, variableDeclaration, type.getName());
    }
 
    public Annotation<O> getAnnotation(final AnnotationTarget<O, T> target, final BodyDeclaration body, final String type)
    {
-      return getAnnotation(target, body.modifiers(), type);
+      return getFrom(body.modifiers(), new AnnotationFactory(target, Replace.BODY), type);
    }
 
    public Annotation<O> getAnnotation(final AnnotationTarget<O, T> target,
             final SingleVariableDeclaration variableDeclaration, final String type)
    {
-      return getAnnotation(target, variableDeclaration.modifiers(), type);
+      return getFrom(variableDeclaration.modifiers(), new AnnotationFactory(target, Replace.VARIABLE), type);
    }
 
-   private Annotation<O> getAnnotation(final AnnotationTarget<O, T> target, final List<?> modifiers, final String type)
+   private Annotation<O> getFrom(final List<?> modifiers, final AnnotationFactory annotationFactory, final String type)
    {
-      List<Annotation<O>> annotations = getAnnotations(target, modifiers);
-      for (Annotation<O> annotation : annotations)
+      @SuppressWarnings("unchecked")
+      Iterator<IExtendedModifier> iter = (Iterator<IExtendedModifier>) modifiers.iterator();
+      while (iter.hasNext())
       {
-         if (Types.areEquivalent(type, annotation.getName()))
+         IExtendedModifier node = iter.next();
+         if (node.isAnnotation())
          {
-            return annotation;
+            final Annotation<O> wrapped = annotationFactory
+                     .createAnnotationFor((org.eclipse.jdt.core.dom.Annotation) node);
+            if (Types.areEquivalent(type, wrapped.getName()))
+            {
+               return wrapped;
+            }
          }
       }
       return null;
    }
+
 }
