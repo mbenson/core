@@ -36,10 +36,11 @@ import org.jboss.shrinkwrap.descriptor.api.Descriptors;
 import javax.enterprise.event.Event;
 import javax.enterprise.inject.spi.BeanManager;
 import javax.inject.Inject;
-import javax.inject.Qualifier;
 import javax.validation.Constraint;
+import javax.validation.Payload;
 
 import java.io.FileNotFoundException;
+import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
 import java.lang.annotation.Target;
 import java.util.Set;
@@ -117,27 +118,27 @@ public class ValidationPlugin implements Plugin
             @Option(required = false, name = "overwrite") final boolean overwrite
             ) throws FileNotFoundException
    {
-      if (!resource.exists() || overwrite)
-      {
-         JavaSourceFacet java = project.getFacet(JavaSourceFacet.class);
-         if (resource.createNewFile())
-         {
-            JavaAnnotation constraint = JavaParser.create(JavaAnnotation.class);
-            constraint.setName(java.calculateName(resource));
-            constraint.setPackage(java.calculatePackage(resource));
-            constraint.addAnnotation(Constraint.class);
-            constraint.addAnnotation(Retention.class).setEnumValue(RUNTIME);
-            constraint.addAnnotation(Target.class).setEnumValue(METHOD, FIELD, PARAMETER, TYPE);
-            
-            resource.setContents(constraint);
-            pickup.fire(new PickupResource(resource));
-         }
-      }
-      else
+      if (!resource.createNewFile() && !overwrite)
       {
          throw new RuntimeException("Type already exists [" + resource.getFullyQualifiedName()
                   + "] Re-run with '--overwrite' to continue.");
       }
+      JavaSourceFacet java = project.getFacet(JavaSourceFacet.class);
+      JavaAnnotation constraint = JavaParser.create(JavaAnnotation.class);
+      constraint.setName(java.calculateName(resource));
+      constraint.setPackage(java.calculatePackage(resource));
+      constraint.addAnnotation(Constraint.class);
+      constraint.addAnnotation(Retention.class).setEnumValue(RUNTIME);
+      constraint.addAnnotation(Target.class).setEnumValue(METHOD, FIELD, PARAMETER, TYPE);
+      constraint.addAnnotation(Documented.class);
+
+      constraint.addAnnotationElement(String.format("String message() default \"{%s.message}\";",
+               constraint.getQualifiedName()));
+      constraint.addAnnotationElement("Class<?> groups() default {};");
+      constraint.addImport(Payload.class);
+      constraint.addAnnotationElement("Class<? extends Payload>[] payload() default {};");
+      resource.setContents(constraint);
+      pickup.fire(new PickupResource(resource));
    }
 
    private void installDependencies(final Set<Dependency> dependencies)
